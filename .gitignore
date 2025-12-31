@@ -1,0 +1,39 @@
+# Virtual environments - DON'T upload to GitHub
+.venv/
+venv/
+env/
+.venv312/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# PyCharm IDE files
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Vosk models - TOO BIG for GitHub (2.6GB!)
+vosk-model-en-us-0.22/
+vosk-model-en-us-0.22-lgraph/
+vosk-model-small-en-us-0.15/
+vosk-model*/
+
+# Audio recordings
+*.wav
+*.mp3
+*.flac
+swear_clips/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Backup files
+*.bak
+*_backup/

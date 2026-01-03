@@ -98,7 +98,8 @@ def get_top5_predictions(frame):
 # ==================== STEP 5: OPEN WEBCAM ====================
 print("\nOpening webcam...")
 print("(This might take 1-2 minutes on AMD GPUs - please wait...)")
-webcam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+webcam = cv2.VideoCapture(1, cv2.CAP_DSHOW)  # CHANGE ME IF HAVE THE CAPTURE CARD IN!
+# 0 = capture card , 1 = webcam
 
 if not webcam.isOpened():
     print("ERROR: Could not open webcam!")

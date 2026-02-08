@@ -1,22 +1,17 @@
 """
-Live FIFA Swear Word Detector - WORD-BY-WORD Detection
-========================================================
-Detects swear words IMMEDIATELY as individual words, not phrases.
-Uses Vosk's word-level results for instant detection.
+Live FIFA Swear Word Detector - MAXIMUM RESPONSIVENESS MODE
+=============================================================
+Optimized for fastest possible detection with Vosk.
+Processes smallest possible phrases and uses partial results.
 
-Requirements:
-1. Run train_speakers.py FIRST to create signature files
-2. pip install vosk pyaudio numpy scipy
-3. mike_signature.npy and james_signature.npy must exist
-
-Author: FIFA Swear Counter Project
+Author: FIFA Swear Counter Project - Final Optimization
 """
 
 # =============================================================================
 # IMPORTS
 # =============================================================================
 print("=" * 70)
-print("FIFA SWEAR WORD DETECTOR - Word-by-Word Mode")
+print("FIFA SWEAR DETECTOR - Maximum Responsiveness Mode")
 print("=" * 70)
 
 import pyaudio
@@ -40,15 +35,15 @@ print("=" * 70)
 SPEECH_MODEL_PATH = "vosk-model-en-us-0.22"
 SPEAKER_MODEL_PATH = "vosk-model-spk-0.4"
 
-# Signature files (created by train_speakers.py)
+# Signature files
 MIKE_SIGNATURE_FILE = "mike_signature.npy"
 JAMES_SIGNATURE_FILE = "james_signature.npy"
 
-# Audio settings
+# OPTIMIZED Audio settings for maximum responsiveness
 SAMPLE_RATE = 16000
-CHUNK_SIZE = 4000
+CHUNK_SIZE = 2000  # SMALLER chunks = faster processing (was 4000)
 
-# SWEAR WORD LIST - exact matches only
+# SWEAR WORD LIST
 SWEAR_WORDS = {
     "fuck", "fucking", "fucker", "fucked", "fucks",
     "shit", "shitting", "shitty", "shitter",
@@ -69,7 +64,7 @@ SWEAR_WORDS = {
 print(f"Speech model: {SPEECH_MODEL_PATH}")
 print(f"Speaker model: {SPEAKER_MODEL_PATH}")
 print(f"Monitoring {len(SWEAR_WORDS)} swear words")
-print(f"Top swears: {', '.join(list(SWEAR_WORDS)[:5])}...")
+print(f"Chunk size: {CHUNK_SIZE} (smaller = faster)")
 
 # =============================================================================
 # CHECK FILES EXIST
@@ -79,24 +74,22 @@ print("CHECKING FILES")
 print("=" * 70)
 
 if not os.path.exists(SPEECH_MODEL_PATH):
-    print(f"✗ ERROR: Speech model not found: {SPEECH_MODEL_PATH}")
+    print(f"✗ ERROR: Speech model not found")
     exit(1)
 print(f"✓ Speech model found")
 
 if not os.path.exists(SPEAKER_MODEL_PATH):
-    print(f"✗ ERROR: Speaker model not found: {SPEAKER_MODEL_PATH}")
+    print(f"✗ ERROR: Speaker model not found")
     exit(1)
 print(f"✓ Speaker model found")
 
 if not os.path.exists(MIKE_SIGNATURE_FILE):
-    print(f"✗ ERROR: Mike's signature not found: {MIKE_SIGNATURE_FILE}")
-    print("  Run train_speakers.py first!")
+    print(f"✗ ERROR: Mike's signature not found")
     exit(1)
 print(f"✓ Mike's signature found")
 
 if not os.path.exists(JAMES_SIGNATURE_FILE):
-    print(f"✗ ERROR: James's signature not found: {JAMES_SIGNATURE_FILE}")
-    print("  Run train_speakers.py first!")
+    print(f"✗ ERROR: James's signature not found")
     exit(1)
 print(f"✓ James's signature found")
 
@@ -118,8 +111,7 @@ print("✓ Speaker model loaded")
 print("Loading voice signatures...")
 mike_signature = np.load(MIKE_SIGNATURE_FILE)
 james_signature = np.load(JAMES_SIGNATURE_FILE)
-print("✓ Mike's voice signature loaded")
-print("✓ James's voice signature loaded")
+print("✓ Signatures loaded")
 
 # =============================================================================
 # SET UP MICROPHONE
@@ -144,10 +136,16 @@ except Exception as e:
     pa.terminate()
     exit(1)
 
-# Create recognizer with speaker identification
+# Create recognizer with OPTIMIZED settings
 recognizer = vosk.KaldiRecognizer(speech_model, SAMPLE_RATE, speaker_model)
-recognizer.SetWords(True)  # CRITICAL: Get individual words with timestamps
-print("✓ Recognizer created")
+recognizer.SetWords(True)  # Word-level timestamps
+
+# CRITICAL OPTIMIZATION: Make Vosk more aggressive about finishing phrases
+# This makes it split on shorter pauses
+recognizer.SetMaxAlternatives(0)  # Don't waste time on alternatives
+recognizer.SetPartialWords(True)  # Get partial word results faster
+
+print("✓ Recognizer created with aggressive settings")
 
 # =============================================================================
 # SCOREBOARD
@@ -156,20 +154,16 @@ mike_swear_count = 0
 james_swear_count = 0
 total_swears = 0
 
+# Track last few detections to avoid duplicates
+recent_detections = []  # Store (word, timestamp) tuples
+
+
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
 def identify_speaker(speaker_vector):
-    """
-    Identify who is speaking based on voice vector.
-
-    Args:
-        speaker_vector: Voice fingerprint from Vosk
-
-    Returns:
-        Tuple of (speaker_name, confidence)
-    """
+    """Identify speaker from voice vector."""
     distance_to_mike = cosine(speaker_vector, mike_signature)
     distance_to_james = cosine(speaker_vector, james_signature)
 
@@ -181,87 +175,127 @@ def identify_speaker(speaker_vector):
         return "JAMES", confidence
 
 
-def process_word_result(result):
+def is_duplicate_detection(word, timestamp):
+    """Check if we already detected this word in last 2 seconds."""
+    global recent_detections
+
+    # Clean old detections (older than 2 seconds)
+    current_time = datetime.now()
+    recent_detections = [
+        (w, t) for w, t in recent_detections
+        if (current_time - t).total_seconds() < 2
+    ]
+
+    # Check if this word was just detected
+    for recent_word, recent_time in recent_detections:
+        if recent_word == word and (timestamp - recent_time).total_seconds() < 1:
+            return True
+
+    return False
+
+
+def process_result(result, is_partial=False):
     """
-    Process word-level results from Vosk.
-    Checks each individual word for swears.
-
-    Args:
-        result: JSON result from Vosk
-
-    Returns:
-        List of (word, speaker, confidence) tuples for detected swears
+    Process Vosk result and detect swears.
+    Works with both full and partial results.
     """
-    global mike_swear_count, james_swear_count, total_swears
+    global mike_swear_count, james_swear_count, total_swears, recent_detections
 
-    detections = []
+    # For partial results, just check the partial text
+    if is_partial:
+        if "partial" not in result:
+            return
 
-    # Check if we have both words and speaker info
-    if "result" not in result or "spk" not in result:
-        return detections
+        partial_text = result["partial"].lower()
+        words = partial_text.split()
 
-    speaker_vector = result["spk"]
-    words = result["result"]  # List of word objects with timestamps
+        # Check each word
+        for word in words:
+            clean_word = word.strip('.,!?;:')
+            if clean_word in SWEAR_WORDS:
+                timestamp = datetime.now()
 
-    # Identify speaker once for this phrase
-    speaker, confidence = identify_speaker(speaker_vector)
+                # Avoid duplicates
+                if is_duplicate_detection(clean_word, timestamp):
+                    continue
 
-    # Check each word individually
-    for word_obj in words:
-        word = word_obj["word"].lower()  # Get the word, lowercase
+                # Can't identify speaker in partial results
+                # But we can at least flag the swear
+                print(
+                    f"⚡ [{timestamp.strftime('%H:%M:%S')}] SWEAR DETECTED: '{clean_word}' (speaker unknown - waiting...)")
 
-        # Is this a swear word?
-        if word in SWEAR_WORDS:
-            # Update scoreboard
-            total_swears += 1
-            if speaker == "MIKE":
-                mike_swear_count += 1
-            else:
-                james_swear_count += 1
+    else:
+        # Full result - has speaker info
+        if "result" not in result or "spk" not in result:
+            return
 
-            # Record detection
-            detections.append((word, speaker, confidence))
+        speaker_vector = result["spk"]
+        words = result["result"]
 
-    return detections
+        # Identify speaker for this phrase
+        speaker, confidence = identify_speaker(speaker_vector)
+
+        # Check each word
+        for word_obj in words:
+            word = word_obj["word"].lower()
+
+            if word in SWEAR_WORDS:
+                timestamp = datetime.now()
+
+                # Avoid duplicates
+                if is_duplicate_detection(word, timestamp):
+                    continue
+
+                # Record this detection
+                recent_detections.append((word, timestamp))
+
+                # Update scoreboard
+                total_swears += 1
+                if speaker == "MIKE":
+                    mike_swear_count += 1
+                else:
+                    james_swear_count += 1
+
+                # Display
+                print(f"🚨 [{timestamp.strftime('%H:%M:%S')}] {speaker}: '{word}' ({confidence * 100:.0f}%)")
+                print(f"   MIKE={mike_swear_count} | JAMES={james_swear_count}")
+                print("-" * 70)
+
 
 # =============================================================================
-# MAIN DETECTION LOOP
+# MAIN DETECTION LOOP - MAXIMUM RESPONSIVENESS
 # =============================================================================
 print("\n" + "=" * 70)
-print("STARTING WORD-BY-WORD DETECTION")
+print("STARTING MAXIMUM RESPONSIVENESS MODE")
 print("=" * 70)
-print("\n🎮 FIFA SWEAR DETECTOR IS LIVE!")
-print("Detecting individual swear words in real-time...")
+print("\n🎮 FIFA SWEAR DETECTOR - HYPER MODE!")
+print("Detecting swears with maximum speed...")
+print("Smaller chunks + partial results = faster detection")
 print("Press Ctrl+C to stop\n")
 print("-" * 70)
 
 try:
     while True:
-        # Read audio from microphone
+        # Read SMALLER audio chunk for faster processing
         audio_data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
 
-        # Process with Vosk
+        # Try to process as full result first
         if recognizer.AcceptWaveform(audio_data):
-            # Got a complete phrase with word-level breakdown
+            # Got a complete phrase
             result = json.loads(recognizer.Result())
+            process_result(result, is_partial=False)
 
-            # Process each word in the result
-            swear_detections = process_word_result(result)
-
-            # Display any swears found
-            for word, speaker, confidence in swear_detections:
-                timestamp = datetime.now().strftime("%H:%M:%S")
-
-                # INSTANT DETECTION DISPLAY - Just the swear word!
-                print(f"🚨 [{timestamp}] {speaker}: '{word}' (confidence: {confidence*100:.0f}%)")
-                print(f"   Score: MIKE={mike_swear_count} | JAMES={james_swear_count}")
-                print("-" * 70)
+        else:
+            # No complete phrase yet - check partial results
+            # This gives us early warning of swears
+            partial = json.loads(recognizer.PartialResult())
+            process_result(partial, is_partial=True)
 
 except KeyboardInterrupt:
-    print("\n\n⚠️  Detection stopped by user")
+    print("\n\n⚠️  Detection stopped")
 
 # =============================================================================
-# CLEANUP AND FINAL RESULTS
+# CLEANUP
 # =============================================================================
 print("\n" + "=" * 70)
 print("FINAL RESULTS")
@@ -271,32 +305,18 @@ stream.stop_stream()
 stream.close()
 pa.terminate()
 
-print("\nFinal scoreboard:")
+print(f"\nFinal scoreboard:")
 print(f"  MIKE:  {mike_swear_count} swears")
 print(f"  JAMES: {james_swear_count} swears")
 print(f"  TOTAL: {total_swears} swears")
 
 if mike_swear_count > james_swear_count:
-    print(f"\n🏆 MIKE wins the swearing competition! 😬")
+    print(f"\n🏆 MIKE is the swear champion! 😬")
 elif james_swear_count > mike_swear_count:
-    print(f"\n🏆 JAMES wins the swearing competition! 😬")
+    print(f"\n🏆 JAMES is the swear champion! 😬")
 else:
-    print(f"\n🤝 It's a tie! Both equally foul-mouthed! 😂")
+    print(f"\n🤝 Perfect tie!")
 
 print("\n" + "=" * 70)
-print("Session complete!")
-print("=" * 70)
 
-## **KEY CHANGES:**
 
-#1. ✅ **Uses `result["result"]`** - the word-level breakdown from Vosk
-#2. ✅ **Checks EACH WORD individually** against the swear list
-#3. ✅ **Only displays swear words** - ignores all other words
-#4. ✅ **Cleaner output** - just shows `MIKE: 'fuck'` instead of full phrases
-#5. ✅ **Same speaker ID** - still uses your trained signatures
-
-## **How it works now:**
-
-#User says: "this is mike fuck you"
-#Old version: [waits for pause] "Said: 'this is mike fuck you'"
-#New version: [instant] MIKE: 'fuck' ✓

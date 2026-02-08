@@ -39,3 +39,4 @@ Thumbs.db
 # Backup files
 *.bak
 *_backup/
+.aider*
